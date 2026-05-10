@@ -11,6 +11,7 @@ export const getRules = async (req: Request, res: Response) => {
         }
         res.json(rules);
     } catch (error) {
+        console.error("GET /rules Error:", error);
         res.status(500).json({ error: 'Failed to fetch rules' });
     }
 };
@@ -30,6 +31,7 @@ export const updateRules = async (req: Request, res: Response) => {
       res.status(404).json({ error: 'Rules not found' });
     }
   } catch (error) {
+    console.error("PUT /rules Error:", error);
     res.status(500).json({ error: 'Failed to update rules' });
   }
 };

@@ -5,6 +5,7 @@ export const getRooms = async (req: Request, res: Response) => {
         const rooms = await prisma.room.findMany();
         res.json(rooms);
     } catch (error) {
+        console.error("GET /rooms Error:", error);
         res.status(500).json({ error: 'Failed to fetch rooms' });
     }
 };
@@ -17,6 +18,7 @@ export const createRoom = async (req: Request, res: Response) => {
         });
         res.status(201).json(room);
     } catch (error) {
+        console.error("POST /rooms Error:", error);
         res.status(500).json({ error: 'Failed to create room' });
     }
 };
@@ -31,6 +33,7 @@ export const updateRoom = async (req: Request, res: Response) => {
         });
         res.json(room);
     } catch (error) {
+        console.error("PUT /rooms/:id Error:", error);
         res.status(500).json({ error: 'Failed to update room' });
     }
 };
@@ -40,6 +43,7 @@ export const deleteRoom = async (req: Request, res: Response) => {
         await prisma.room.delete({ where: { id } });
         res.status(204).send();
     } catch (error) {
+        console.error("DELETE /rooms/:id Error:", error);
         res.status(500).json({ error: 'Failed to delete room' });
     }
 };

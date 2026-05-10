@@ -1,4 +1,4 @@
-import { AllocationInput, SeatingPlan, Seat, SubjectGroup, Student } from './types';
+import type { AllocationInput, SeatingPlan, Seat, SubjectGroup, Student } from './types';
 
 const groupStudents = (students: Student[]): SubjectGroup[] => {
     const map = new Map<string, SubjectGroup>();

@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { z } from 'zod';
-import { Student } from './types';
+import type { Student } from './types';
 
 const ExcelRowSchema = z.object({
   enrollment_no: z.union([z.string(), z.number()]).transform(val => String(val).trim()),

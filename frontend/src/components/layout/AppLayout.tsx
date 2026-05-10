@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Users, Upload, Eye, Settings, FileText } from 'lucide-react';
+import { LayoutDashboard, Users, Upload, Eye } from 'lucide-react';
+import { useAppStore } from '../../services/useAppStore';
 
 const Sidebar = () => {
   const links = [
@@ -8,8 +9,6 @@ const Sidebar = () => {
     { to: '/rooms', icon: Users, label: 'Rooms' },
     { to: '/upload', icon: Upload, label: 'Upload Data' },
     { to: '/preview', icon: Eye, label: 'Seating Preview' },
-    { to: '/sessions', icon: FileText, label: 'Sessions' },
-    { to: '/settings', icon: Settings, label: 'Settings' },
   ];
 
   return (
@@ -40,6 +39,13 @@ const Sidebar = () => {
 };
 
 export const AppLayout: React.FC = () => {
+  const { fetchRooms, fetchRules } = useAppStore();
+
+  useEffect(() => {
+    fetchRooms();
+    fetchRules();
+  }, [fetchRooms, fetchRules]);
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
