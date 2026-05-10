@@ -17,7 +17,6 @@ model Room {
 
 model Rule {
     id String @id @default(cuid())
-    maxSubjectsPerRoom Int @default(2)
     enforceAlternateSeating Boolean @default(true)
     fillRoomsCompletely Boolean @default(true)
 }
