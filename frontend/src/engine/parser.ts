@@ -24,7 +24,12 @@ export const parseExcelFile = async (file: File): Promise<{ students: Student[],
                 const errors: any[] = [];
 
                 rawJson.forEach((row: any, index) => {
-                const parsed = ExcelRowSchema.safeParse(row);
+                const cleanRow: any = {};
+                for (const key in row) {
+                    cleanRow[key.trim()] = row[key];
+                }
+
+                const parsed = ExcelRowSchema.safeParse(cleanRow);
                 if (parsed.success && parsed.data.enrollment_no !== "") {
                     students.push({
                         enrollmentNo: parsed.data.enrollment_no,
