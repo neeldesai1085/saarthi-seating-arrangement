@@ -12,7 +12,7 @@ export const RoomService = {
     const response = await api.get<Room[]>('/rooms');
     return response.data;
   },
-  create: async (data: Omit<Room, 'id' | 'totalSeats'>) => {
+  create: async (data: Omit<Room, 'id' | 'totalSeats' | 'sortOrder'>) => {
     const response = await api.post<Room>('/rooms', data);
     return response.data;
   },
@@ -22,6 +22,10 @@ export const RoomService = {
   },
   delete: async (id: string) => {
     await api.delete(`/rooms/${id}`);
+  },
+  reorder: async (orderedIds: string[]) => {
+    const response = await api.put<Room[]>('/rooms/reorder', { orderedIds });
+    return response.data;
   }
 };
 

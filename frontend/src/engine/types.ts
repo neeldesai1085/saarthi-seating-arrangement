@@ -3,8 +3,8 @@ export type Room = {
     roomName: string;
     rows: number;
     columns: number;
-    benchCapacity: number;
     totalSeats: number;
+    sortOrder: number;
 };
 
 export type Rule = {
@@ -27,7 +27,7 @@ export type SubjectGroup = {
 export type Seat = {
     row: number;
     column: number;
-    side: "LEFT" | "RIGHT" | "MIDDLE";
+    side: "LEFT" | "RIGHT";
     student: Student | null;
 };
 

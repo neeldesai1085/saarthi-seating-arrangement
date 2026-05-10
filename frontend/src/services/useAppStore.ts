@@ -15,8 +15,9 @@ interface AppState {
     fetchRules: () => Promise<void>;
     setStudents: (students: Student[]) => void;
     generatePlan: () => void;
-    addRoom: (room: Omit<Room, 'id' | 'totalSeats'>) => Promise<void>;
+    addRoom: (room: Omit<Room, 'id' | 'totalSeats' | 'sortOrder'>) => Promise<void>;
     removeRoom: (id: string) => Promise<void>;
+    reorderRooms: (orderedIds: string[]) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -91,6 +92,15 @@ export const useAppStore = create<AppState>((set, get) => ({
             }));
         } catch (err: any) {
             set({ error: err.message, isLoading: false });
+        }
+    },
+
+    reorderRooms: async (orderedIds) => {
+        try {
+            const rooms = await RoomService.reorder(orderedIds);
+            set({ rooms });
+        } catch (err: any) {
+            set({ error: err.message });
         }
     }
 }));

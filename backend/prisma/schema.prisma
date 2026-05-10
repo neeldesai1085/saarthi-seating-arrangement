@@ -11,8 +11,8 @@ model Room {
     roomName String
     rows Int
     columns Int
-    benchCapacity Int
     totalSeats Int
+    sortOrder Int @default(0)
 }
 
 model Rule {

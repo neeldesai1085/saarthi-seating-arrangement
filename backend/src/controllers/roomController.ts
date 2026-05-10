@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { prisma } from '../prisma/client.js';
 export const getRooms = async (req: Request, res: Response) => {
     try {
-        const rooms = await prisma.room.findMany();
+        const rooms = await prisma.room.findMany({ orderBy: { sortOrder: 'asc' } });
         res.json(rooms);
     } catch (error) {
         console.error("GET /rooms Error:", error);
@@ -11,10 +11,12 @@ export const getRooms = async (req: Request, res: Response) => {
 };
 export const createRoom = async (req: Request, res: Response) => {
     try {
-        const { roomName, rows, columns, benchCapacity } = req.body;
-        const totalSeats = rows * columns * benchCapacity;
+        const { roomName, rows, columns } = req.body;
+        const totalSeats = rows * columns * 2;
+        const maxOrder = await prisma.room.aggregate({ _max: { sortOrder: true } });
+        const sortOrder = (maxOrder._max.sortOrder ?? -1) + 1;
         const room = await prisma.room.create({
-            data: { roomName, rows, columns, benchCapacity, totalSeats },
+            data: { roomName, rows, columns, totalSeats, sortOrder },
         });
         res.status(201).json(room);
     } catch (error) {
@@ -25,11 +27,11 @@ export const createRoom = async (req: Request, res: Response) => {
 export const updateRoom = async (req: Request, res: Response) => {
     try {
         const id = req.params.id as string;
-        const { roomName, rows, columns, benchCapacity } = req.body;
-        const totalSeats = rows * columns * benchCapacity;
+        const { roomName, rows, columns } = req.body;
+        const totalSeats = rows * columns * 2;
         const room = await prisma.room.update({
             where: { id },
-            data: { roomName, rows, columns, benchCapacity, totalSeats },
+            data: { roomName, rows, columns, totalSeats },
         });
         res.json(room);
     } catch (error) {
@@ -45,5 +47,20 @@ export const deleteRoom = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("DELETE /rooms/:id Error:", error);
         res.status(500).json({ error: 'Failed to delete room' });
+    }
+};
+export const reorderRooms = async (req: Request, res: Response) => {
+    try {
+        const { orderedIds } = req.body as { orderedIds: string[] };
+        await Promise.all(
+            orderedIds.map((id, index) =>
+                prisma.room.update({ where: { id }, data: { sortOrder: index } })
+            )
+        );
+        const rooms = await prisma.room.findMany({ orderBy: { sortOrder: 'asc' } });
+        res.json(rooms);
+    } catch (error) {
+        console.error("PUT /rooms/reorder Error:", error);
+        res.status(500).json({ error: 'Failed to reorder rooms' });
     }
 };
