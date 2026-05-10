@@ -7,7 +7,15 @@ import ruleRoutes from './routes/ruleRoutes.js';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({
+    origin: [
+        'http://localhost:5173',
+        'https://saarthi-seating-arrangement.vercel.app',
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true,
+}));
+
 app.use(express.json());
 app.use('/api/rooms', roomRoutes);
 app.use('/api/rules', ruleRoutes);
