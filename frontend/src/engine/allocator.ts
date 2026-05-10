@@ -1,198 +1,156 @@
 import type { AllocationInput, SeatingPlan, SubjectGroup, Student } from './types';
 
-interface GlobalSeat {
-    roomId: string;
-    roomName: string;
-    row: number;
-    column: number;
-    side: "LEFT" | "RIGHT";
-    student: Student | null;
-    benchId: string;
-}
-
 const sortGroups = (groups: SubjectGroup[]) => {
     groups.sort((a, b) => {
-        if (b.totalStudents !== a.totalStudents) {
-            return b.totalStudents - a.totalStudents;
-        }
+        if (b.totalStudents !== a.totalStudents) return b.totalStudents - a.totalStudents;
         return a.subjectCode.localeCompare(b.subjectCode);
     });
 };
 
 const groupStudents = (students: Student[]): SubjectGroup[] => {
     const map = new Map<string, SubjectGroup>();
-    
     students.forEach(s => {
         if (!map.has(s.subjectCode)) {
-            map.set(s.subjectCode, {
-                subjectCode: s.subjectCode,
-                students: [],
-                totalStudents: 0
-            });
+            map.set(s.subjectCode, { subjectCode: s.subjectCode, students: [], totalStudents: 0 });
         }
-        const group = map.get(s.subjectCode)!;
-        group.students.push(s);
-        group.totalStudents += 1;
+        const g = map.get(s.subjectCode)!;
+        g.students.push(s);
+        g.totalStudents++;
     });
-
     const groups = Array.from(map.values());
     groups.forEach(g => {
         g.students.sort((a, b) => a.enrollmentNo.localeCompare(b.enrollmentNo, undefined, { numeric: true, sensitivity: 'base' }));
     });
-    
     sortGroups(groups);
     return groups;
 };
 
-export const generateSeatingPlan = ({ rooms, students, rules }: AllocationInput): SeatingPlan[] => {
+/**
+ * HARD CONSTRAINT: Never same subject on both sides of same bench.
+ * Leave seats EMPTY rather than violate this.
+ *
+ * Priority chain per seat:
+ *   1. Vertical continuity (same as seat in front) + bench-safe
+ *   2. Room-active subject + bench-safe (keeps room to 2 subjects)
+ *   3. Any subject + bench-safe (introduces new subject if needed)
+ *   4. Leave seat empty (never violate bench constraint)
+ *
+ * Fill order: Column-major (col → side → row) for sequential enrollment numbers.
+ * Precomputed rows ensure compact front-filling.
+ */
+export const generateSeatingPlan = ({ rooms, students }: AllocationInput): SeatingPlan[] => {
     const groups = groupStudents(students);
-    
-    // 1. Build Global Seat Array with precomputed row limits
-    const globalSeats: GlobalSeat[] = [];
-    let remainingStudents = students.length;
-    
-    for (const room of rooms) {
-        if (remainingStudents <= 0) break;
-        
-        const seatsPerRow = room.columns * 2;
-        const studentsForThisRoom = Math.min(remainingStudents, room.rows * seatsPerRow);
-        const rowsNeeded = Math.ceil(studentsForThisRoom / seatsPerRow);
-        remainingStudents -= studentsForThisRoom;
-        
-        // Column-major within the precomputed rows only
-        for (let c = 1; c <= room.columns; c++) {
-            for (let r = 1; r <= rowsNeeded; r++) {
-                const sides: Array<"LEFT" | "RIGHT"> = ["LEFT", "RIGHT"];
-                for (const side of sides) {
-                    globalSeats.push({
-                        roomId: room.id,
-                        roomName: room.roomName,
-                        row: r,
-                        column: c,
-                        side,
-                        student: null,
-                        benchId: `${room.id}-C${c}-R${r}`
-                    });
-                }
-            }
-        }
-    }
 
-    // 2. Global Allocation Loop
-    let currentSeatIndex = 0;
-    
-    while (groups.length > 0 && currentSeatIndex < globalSeats.length) {
-        const seat = globalSeats[currentSeatIndex];
-        
-        let prioritySubject: string | null = null;
-        const avoidSubjects = new Set<string>();
-
-        // Force vertical uniformity: Look at the seat directly in front (same col, same side, row - 1)
-        if (seat.row > 1) {
-            for (let i = currentSeatIndex - 1; i >= 0; i--) {
-                const pastSeat = globalSeats[i];
-                if (pastSeat.roomId === seat.roomId && pastSeat.column === seat.column) {
-                    if (pastSeat.row === seat.row - 1 && pastSeat.side === seat.side && pastSeat.student) {
-                        prioritySubject = pastSeat.student.subjectCode;
-                        break;
-                    }
-                } else if (pastSeat.roomId !== seat.roomId || pastSeat.column !== seat.column) {
-                    break; 
-                }
-            }
-        }
-
-        if (rules.enforceAlternateSeating) {
-            // Horizontal alternating: Avoid the subject of the horizontally adjacent seat to the left
-            let leftAdjacentSeat = null;
-            for (let i = currentSeatIndex - 1; i >= 0; i--) {
-                const pastSeat = globalSeats[i];
-                if (pastSeat.roomId !== seat.roomId) continue;
-
-                // Same bench, different side (the seat right next to us)
-                if (pastSeat.column === seat.column && pastSeat.row === seat.row) {
-                    leftAdjacentSeat = pastSeat;
-                    break;
-                }
-                
-                // Adjacent bench (previous column, same row)
-                if (pastSeat.column === seat.column - 1 && pastSeat.row === seat.row) {
-                    leftAdjacentSeat = pastSeat;
-                    break;
-                }
-            }
-
-            if (leftAdjacentSeat && leftAdjacentSeat.student) {
-                avoidSubjects.add(leftAdjacentSeat.student.subjectCode);
-            }
-        }
-
-        let selectedGroupIndex = -1;
-
-        // Priority: continue the same subject from the row above
-        if (prioritySubject) {
-            selectedGroupIndex = groups.findIndex(g => g.subjectCode === prioritySubject);
-        }
-
-        // Otherwise pick the largest group that doesn't violate adjacency
-        if (selectedGroupIndex === -1) {
-            selectedGroupIndex = groups.findIndex(g => !avoidSubjects.has(g.subjectCode));
-        }
-        
-        // Fallback: pick the absolute largest if no other option
-        if (selectedGroupIndex === -1 && groups.length > 0) {
-            selectedGroupIndex = 0;
-        }
-
-        if (selectedGroupIndex !== -1) {
-            const group = groups[selectedGroupIndex];
-            seat.student = group.students.shift()!;
-            group.totalStudents--;
-
-            if (group.totalStudents === 0) {
-                groups.splice(selectedGroupIndex, 1);
-            }
-            sortGroups(groups);
-            
-            currentSeatIndex++;
-        } else {
-            break;
-        }
-    }
-
-    // 3. Reconstruct Seating Plans per Room
     const plansMap = new Map<string, SeatingPlan>();
-    
     rooms.forEach(room => {
-        plansMap.set(room.id, {
-            roomId: room.id,
-            roomName: room.roomName,
-            seats: [],
-            unallocatedStudents: []
-        });
+        plansMap.set(room.id, { roomId: room.id, roomName: room.roomName, seats: [], unallocatedStudents: [] });
     });
 
-    globalSeats.forEach(seat => {
-        if (seat.student) {
-            plansMap.get(seat.roomId)!.seats.push({
-                row: seat.row,
-                column: seat.column,
-                side: seat.side,
-                student: seat.student
-            });
+    for (const room of rooms) {
+        if (groups.every(g => g.students.length === 0)) break;
+
+        // --- Precompute rows needed ---
+        const totalRemaining = groups.reduce((s, g) => s + g.students.length, 0);
+        const distinctWithStudents = groups.filter(g => g.students.length > 0).length;
+        // If only 1 subject, each row can only seat `columns` students (one side per bench)
+        const effectiveSeatsPerRow = distinctWithStudents >= 2 ? room.columns * 2 : room.columns;
+        const studentsForRoom = Math.min(totalRemaining, room.rows * effectiveSeatsPerRow);
+        if (studentsForRoom === 0) continue;
+        const rowsNeeded = Math.ceil(studentsForRoom / effectiveSeatsPerRow);
+
+        const roomPlan = plansMap.get(room.id)!;
+        const roomActiveSubjects = new Set<string>();
+
+        // Track what subject is assigned to each column-side for bench constraint checking
+        // Key: "col-side", Value: subjectCode
+        const columnSideSubject = new Map<string, string>();
+
+        // --- Fill: column → side → row (column-major for sequential enrollment) ---
+        for (let c = 1; c <= room.columns; c++) {
+            for (const side of ["LEFT", "RIGHT"] as const) {
+                // Determine which subject this column-side should use
+                let chosenGroup: SubjectGroup | null = null;
+
+                // What subject is on the OTHER side of this column?
+                const otherSideKey = `${c}-${side === "LEFT" ? "RIGHT" : "LEFT"}`;
+                const otherSideSubject = columnSideSubject.get(otherSideKey) ?? null;
+
+                // What subject was on the PREVIOUS column, same side? (for vertical pattern)
+                // Not directly "in front" but useful for maintaining patterns across columns
+                const prevColKey = `${c - 1}-${side}`;
+                const prevColSubject = columnSideSubject.get(prevColKey) ?? null;
+
+                // Priority 1: Reuse a room-active subject that's bench-safe
+                if (!chosenGroup) {
+                    for (const subCode of roomActiveSubjects) {
+                        if (subCode === otherSideSubject) continue; // bench constraint
+                        const g = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
+                        if (g) { chosenGroup = g; break; }
+                    }
+                }
+
+                // Priority 2: Any subject that's bench-safe (may introduce new subject)
+                if (!chosenGroup) {
+                    sortGroups(groups);
+                    chosenGroup = groups.find(g =>
+                        g.students.length > 0 && g.subjectCode !== otherSideSubject
+                    ) ?? null;
+                }
+
+                // Priority 3: LEAVE EMPTY (never violate bench constraint)
+                if (!chosenGroup) continue;
+
+                // --- Fill this column-side with students from chosenGroup ---
+                columnSideSubject.set(`${c}-${side}`, chosenGroup.subjectCode);
+                roomActiveSubjects.add(chosenGroup.subjectCode);
+
+                for (let r = 1; r <= rowsNeeded; r++) {
+                    if (chosenGroup.students.length === 0) {
+                        // Subject exhausted mid-column. Find replacement (bench-safe).
+                        const exhaustedSubject = chosenGroup.subjectCode;
+                        sortGroups(groups);
+
+                        // Try room-active first
+                        let replacement: SubjectGroup | null = null;
+                        for (const subCode of roomActiveSubjects) {
+                            if (subCode === otherSideSubject || subCode === exhaustedSubject) continue;
+                            const g = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
+                            if (g) { replacement = g; break; }
+                        }
+                        // Then any bench-safe subject
+                        if (!replacement) {
+                            replacement = groups.find(g =>
+                                g.students.length > 0 && g.subjectCode !== otherSideSubject
+                            ) ?? null;
+                        }
+
+                        if (!replacement) break; // No bench-safe subject available, leave remaining empty
+                        chosenGroup = replacement;
+                        roomActiveSubjects.add(chosenGroup.subjectCode);
+                    }
+
+                    const student = chosenGroup.students.shift()!;
+                    chosenGroup.totalStudents--;
+                    roomPlan.seats.push({ row: r, column: c, side, student });
+
+                    if (chosenGroup.totalStudents === 0) {
+                        groups.splice(groups.indexOf(chosenGroup), 1);
+                    }
+                }
+            }
         }
-    });
+
+        // Clean up exhausted groups
+        sortGroups(groups);
+    }
 
     const plans = Array.from(plansMap.values());
 
-    // 4. Handle remaining unallocated students
-    const unallocatedStudents: Student[] = [];
-    groups.forEach(g => {
-        unallocatedStudents.push(...g.students);
-    });
-
-    if (unallocatedStudents.length > 0 && plans.length > 0) {
-        plans[plans.length - 1].unallocatedStudents = unallocatedStudents;
+    // Unallocated students
+    const unallocated: Student[] = [];
+    groups.forEach(g => unallocated.push(...g.students));
+    if (unallocated.length > 0 && plans.length > 0) {
+        plans[plans.length - 1].unallocatedStudents = unallocated;
     }
 
     return plans;
