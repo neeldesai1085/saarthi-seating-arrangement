@@ -75,11 +75,6 @@ export const generateSeatingPlan = ({ rooms, students }: AllocationInput): Seati
                 const otherSideKey = `${c}-${side === "LEFT" ? "RIGHT" : "LEFT"}`;
                 const otherSideSubject = columnSideSubject.get(otherSideKey) ?? null;
 
-                // What subject was on the PREVIOUS column, same side? (for vertical pattern)
-                // Not directly "in front" but useful for maintaining patterns across columns
-                const prevColKey = `${c - 1}-${side}`;
-                const prevColSubject = columnSideSubject.get(prevColKey) ?? null;
-
                 // Priority 1: Reuse a room-active subject that's bench-safe
                 if (!chosenGroup) {
                     for (const subCode of roomActiveSubjects) {
@@ -107,14 +102,14 @@ export const generateSeatingPlan = ({ rooms, students }: AllocationInput): Seati
                 for (let r = 1; r <= rowsNeeded; r++) {
                     if (chosenGroup.students.length === 0) {
                         // Subject exhausted mid-column. Find replacement (bench-safe).
-                        const exhaustedSubject = chosenGroup.subjectCode;
+                        const exhaustedSubject: string = chosenGroup.subjectCode;
                         sortGroups(groups);
 
                         // Try room-active first
                         let replacement: SubjectGroup | null = null;
                         for (const subCode of roomActiveSubjects) {
                             if (subCode === otherSideSubject || subCode === exhaustedSubject) continue;
-                            const g = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
+                            const g: SubjectGroup | undefined = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
                             if (g) { replacement = g; break; }
                         }
                         // Then any bench-safe subject
