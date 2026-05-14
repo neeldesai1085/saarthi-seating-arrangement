@@ -1,7 +1,7 @@
-import { create } from 'zustand';
-import type { Room, Rule, Student, SeatingPlan } from '../engine/types';
-import { RoomService, RuleService } from '../services/api';
-import { generateSeatingPlan } from '../engine/allocator';
+import { create } from "zustand";
+import type { Room, Rule, Student, SeatingPlan } from "../engine/types";
+import { RoomService, RuleService } from "../services/api";
+import { generateSeatingPlan } from "../engine/allocator";
 
 interface AppState {
     rooms: Room[];
@@ -10,14 +10,13 @@ interface AppState {
     seatingPlans: SeatingPlan[];
     isLoading: boolean;
     error: string | null;
-    
+
     fetchRooms: () => Promise<void>;
     fetchRules: () => Promise<void>;
     setStudents: (students: Student[]) => void;
     generatePlan: () => void;
-    addRoom: (room: Omit<Room, 'id' | 'totalSeats' | 'sortOrder'>) => Promise<void>;
+    addRoom: (room: Omit<Room, "id" | "totalSeats">) => Promise<void>;
     removeRoom: (id: string) => Promise<void>;
-    reorderRooms: (orderedIds: string[]) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -62,13 +61,16 @@ export const useAppStore = create<AppState>((set, get) => ({
             set({ error: "Missing rooms or students" });
             return;
         }
-        
+
         set({ isLoading: true, error: null });
         try {
             const plans = generateSeatingPlan({ rooms, students, rules });
             set({ seatingPlans: plans, isLoading: false });
         } catch (err: any) {
-            set({ error: "Failed to generate plan: " + err.message, isLoading: false });
+            set({
+                error: "Failed to generate plan: " + err.message,
+                isLoading: false,
+            });
         }
     },
 
@@ -76,7 +78,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ isLoading: true });
         try {
             const newRoom = await RoomService.create(roomData);
-            set((state) => ({ rooms: [...state.rooms, newRoom], isLoading: false }));
+            set((state) => ({
+                rooms: [...state.rooms, newRoom],
+                isLoading: false,
+            }));
         } catch (err: any) {
             set({ error: err.message, isLoading: false });
         }
@@ -86,21 +91,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ isLoading: true });
         try {
             await RoomService.delete(id);
-            set((state) => ({ 
-                rooms: state.rooms.filter(r => r.id !== id),
-                isLoading: false 
+            set((state) => ({
+                rooms: state.rooms.filter((r) => r.id !== id),
+                isLoading: false,
             }));
         } catch (err: any) {
             set({ error: err.message, isLoading: false });
         }
     },
-
-    reorderRooms: async (orderedIds) => {
-        try {
-            const rooms = await RoomService.reorder(orderedIds);
-            set({ rooms });
-        } catch (err: any) {
-            set({ error: err.message });
-        }
-    }
 }));

@@ -4,7 +4,6 @@ export type Room = {
     rows: number;
     columns: number;
     totalSeats: number;
-    sortOrder: number;
 };
 
 export type Rule = {
