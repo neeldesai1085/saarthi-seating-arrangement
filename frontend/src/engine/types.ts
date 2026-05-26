@@ -15,12 +15,14 @@ export type Rule = {
 export type Student = {
     enrollmentNo: string;
     subjectCode: string;
+    subjectName: string;
 };
 
 export type SubjectGroup = {
     subjectCode: string;
     students: Student[];
-    totalStudents: number;
+    /** Pointer-based cursor for O(1) consumption. Index of the next student to allocate. */
+    cursor: number;
 };
 
 export type Seat = {
@@ -34,11 +36,26 @@ export type SeatingPlan = {
     roomId: string;
     roomName: string;
     seats: Seat[];
-    unallocatedStudents?: Student[];
+    unallocatedStudents: Student[];
 };
 
 export type AllocationInput = {
     rooms: Room[];
     students: Student[];
-    rules: Rule;
+};
+
+export type Invigilator = {
+    id: string;
+    name: string;
+};
+
+export type InvigilatorPlan = {
+    roomId: string;
+    roomName: string;
+    invigilators: Invigilator[];
+};
+
+export type InvigilatorAllocationInput = {
+    rooms: Room[];
+    invigilators: Invigilator[];
 };

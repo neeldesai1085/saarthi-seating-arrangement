@@ -1,152 +1,197 @@
 import type { AllocationInput, SeatingPlan, SubjectGroup, Student } from './types';
 
-const sortGroups = (groups: SubjectGroup[]) => {
-    groups.sort((a, b) => {
-        if (b.totalStudents !== a.totalStudents) return b.totalStudents - a.totalStudents;
-        return a.subjectCode.localeCompare(b.subjectCode);
-    });
+// ── helpers ──────────────────────────────────────────────────────────
+
+/** Number of remaining students in a group (pointer-based). */
+const remaining = (g: SubjectGroup): number => g.students.length - g.cursor;
+
+/** Take the next student from a group. Returns null if exhausted. */
+const take = (g: SubjectGroup): Student | null => {
+    if (g.cursor >= g.students.length) return null;
+    return g.students[g.cursor++];
 };
 
-const groupStudents = (students: Student[]): SubjectGroup[] => {
-    const map = new Map<string, SubjectGroup>();
-    students.forEach(s => {
-        if (!map.has(s.subjectCode)) {
-            map.set(s.subjectCode, { subjectCode: s.subjectCode, students: [], totalStudents: 0 });
-        }
-        const g = map.get(s.subjectCode)!;
-        g.students.push(s);
-        g.totalStudents++;
-    });
-    const groups = Array.from(map.values());
-    groups.forEach(g => {
-        g.students.sort((a, b) => a.enrollmentNo.localeCompare(b.enrollmentNo, undefined, { numeric: true, sensitivity: 'base' }));
-    });
+/** Fisher-Yates shuffle (in-place). */
+const shuffle = <T>(arr: T[]): T[] => {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+};
+
+/** Group students by subjectCode, sort within each group by enrollmentNo, sort groups by size desc. */
+const buildGroups = (students: Student[]): SubjectGroup[] => {
+    const map = new Map<string, Student[]>();
+    for (const s of students) {
+        let list = map.get(s.subjectCode);
+        if (!list) { list = []; map.set(s.subjectCode, list); }
+        list.push(s);
+    }
+    const groups: SubjectGroup[] = [];
+    for (const [code, list] of map) {
+        list.sort((a, b) => a.enrollmentNo.localeCompare(b.enrollmentNo, undefined, { numeric: true, sensitivity: 'base' }));
+        groups.push({ subjectCode: code, students: list, cursor: 0 });
+    }
     sortGroups(groups);
     return groups;
 };
 
-/**
- * HARD CONSTRAINT: Never same subject on both sides of same bench.
- * Leave seats EMPTY rather than violate this.
- *
- * Priority chain per seat:
- *   1. Vertical continuity (same as seat in front) + bench-safe
- *   2. Room-active subject + bench-safe (keeps room to 2 subjects)
- *   3. Any subject + bench-safe (introduces new subject if needed)
- *   4. Leave seat empty (never violate bench constraint)
- *
- * Fill order: Column-major (col → side → row) for sequential enrollment numbers.
- * Precomputed rows ensure compact front-filling.
- */
-export const generateSeatingPlan = ({ rooms, students }: AllocationInput): SeatingPlan[] => {
-    const groups = groupStudents(students);
-
-    const plansMap = new Map<string, SeatingPlan>();
-    rooms.forEach(room => {
-        plansMap.set(room.id, { roomId: room.id, roomName: room.roomName, seats: [], unallocatedStudents: [] });
+/** Sort groups in-place by remaining count desc, with random tie-breaking. */
+const sortGroups = (groups: SubjectGroup[]): void => {
+    groups.sort((a, b) => {
+        const diff = remaining(b) - remaining(a);
+        if (diff !== 0) return diff;
+        // Random tie-break when groups are equally sized
+        return Math.random() - 0.5;
     });
+};
 
+/**
+ * Pick the best group for a seat, respecting bench constraint.
+ *
+ * @param preferred - Subject to prefer for vertical continuity (same as row above, same side).
+ * @param forbidden - Subject on the OTHER side of this bench. Must never match.
+ */
+const pickGroup = (
+    groups: SubjectGroup[],
+    roomActive: Set<string>,
+    preferred: string | null,
+    forbidden: string | null,
+): SubjectGroup | null => {
+    // Priority 0: preferred subject (vertical continuity) if bench-safe
+    if (preferred && preferred !== forbidden) {
+        const g = groups.find(g => g.subjectCode === preferred && remaining(g) > 0);
+        if (g) return g;
+    }
+    // Priority 1: room-active subject that is bench-safe (minimize subjects per room)
+    for (const code of roomActive) {
+        if (code === forbidden) continue;
+        const g = groups.find(g => g.subjectCode === code && remaining(g) > 0);
+        if (g) return g;
+    }
+    // Priority 2: any subject that is bench-safe (introduces new subject)
+    sortGroups(groups);
+    for (const g of groups) {
+        if (remaining(g) > 0 && g.subjectCode !== forbidden) return g;
+    }
+    // Priority 3: no valid subject → leave seat empty
+    return null;
+};
+
+// ── main allocator ──────────────────────────────────────────────────
+
+const generateSinglePlan = ({ rooms, students }: AllocationInput): SeatingPlan[] => {
+    const groups = buildGroups(students);
+    const totalStudents = students.length;
+
+    // Phase 3: Randomize room order
+    const shuffledRooms = shuffle([...rooms]);
+
+    // Phase 4: Global room packing plan – compute rows needed per room
+    const roomRowsMap = new Map<string, number>();
+    let budgetLeft = totalStudents;
+    for (const room of shuffledRooms) {
+        if (budgetLeft <= 0) { roomRowsMap.set(room.id, 0); continue; }
+        const seatsPerRow = room.columns * 2;
+        const maxSeats = room.rows * seatsPerRow;
+        const consume = Math.min(budgetLeft, maxSeats);
+        const rowsNeeded = Math.ceil(consume / seatsPerRow);
+        roomRowsMap.set(room.id, rowsNeeded);
+        budgetLeft -= consume;
+    }
+
+    // Initialise plan map (keeps original room order for output)
+    const plansMap = new Map<string, SeatingPlan>();
     for (const room of rooms) {
-        if (groups.every(g => g.students.length === 0)) break;
+        plansMap.set(room.id, { roomId: room.id, roomName: room.roomName, seats: [], unallocatedStudents: [] });
+    }
 
-        // --- Precompute rows needed ---
-        const totalRemaining = groups.reduce((s, g) => s + g.students.length, 0);
-        const distinctWithStudents = groups.filter(g => g.students.length > 0).length;
-        // If only 1 subject, each row can only seat `columns` students (one side per bench)
-        const effectiveSeatsPerRow = distinctWithStudents >= 2 ? room.columns * 2 : room.columns;
-        const studentsForRoom = Math.min(totalRemaining, room.rows * effectiveSeatsPerRow);
-        if (studentsForRoom === 0) continue;
-        const rowsNeeded = Math.ceil(studentsForRoom / effectiveSeatsPerRow);
+    // Phase 5-7: Room-level bench-atomic allocation
+    for (const room of shuffledRooms) {
+        const rowsNeeded = roomRowsMap.get(room.id)!;
+        if (rowsNeeded === 0) continue;
+        if (groups.every(g => remaining(g) === 0)) break;
 
         const roomPlan = plansMap.get(room.id)!;
-        const roomActiveSubjects = new Set<string>();
+        const roomActive = new Set<string>();
 
-        // Track what subject is assigned to each column-side for bench constraint checking
-        // Key: "col-side", Value: subjectCode
-        const columnSideSubject = new Map<string, string>();
+        // Track the current subject flowing down each column-side for vertical continuity.
+        // Key: "col-side" → subjectCode of the last student placed in that lane.
+        const laneSubject = new Map<string, string>();
 
-        // --- Fill: column → side → row (column-major for sequential enrollment) ---
+        // Column-major, bench-atomic:
         for (let c = 1; c <= room.columns; c++) {
-            for (const side of ["LEFT", "RIGHT"] as const) {
-                // Determine which subject this column-side should use
-                let chosenGroup: SubjectGroup | null = null;
+            for (let r = 1; r <= rowsNeeded; r++) {
 
-                // What subject is on the OTHER side of this column?
-                const otherSideKey = `${c}-${side === "LEFT" ? "RIGHT" : "LEFT"}`;
-                const otherSideSubject = columnSideSubject.get(otherSideKey) ?? null;
+                // ── LEFT seat ──
+                const leftPreferred = laneSubject.get(`${c}-LEFT`) ?? null;
+                const leftGroup = pickGroup(groups, roomActive, leftPreferred, null);
 
-                // Priority 1: Reuse a room-active subject that's bench-safe
-                if (!chosenGroup) {
-                    for (const subCode of roomActiveSubjects) {
-                        if (subCode === otherSideSubject) continue; // bench constraint
-                        const g = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
-                        if (g) { chosenGroup = g; break; }
-                    }
+                let leftSubject: string | null = null;
+                if (leftGroup && remaining(leftGroup) > 0) {
+                    const student = take(leftGroup)!;
+                    roomPlan.seats.push({ row: r, column: c, side: 'LEFT', student });
+                    leftSubject = leftGroup.subjectCode;
+                    laneSubject.set(`${c}-LEFT`, leftSubject);
+                    roomActive.add(leftSubject);
                 }
 
-                // Priority 2: Any subject that's bench-safe (may introduce new subject)
-                if (!chosenGroup) {
-                    sortGroups(groups);
-                    chosenGroup = groups.find(g =>
-                        g.students.length > 0 && g.subjectCode !== otherSideSubject
-                    ) ?? null;
-                }
+                // ── RIGHT seat ──
+                const rightPreferred = laneSubject.get(`${c}-RIGHT`) ?? null;
+                const rightGroup = pickGroup(groups, roomActive, rightPreferred, leftSubject);
 
-                // Priority 3: LEAVE EMPTY (never violate bench constraint)
-                if (!chosenGroup) continue;
-
-                // --- Fill this column-side with students from chosenGroup ---
-                columnSideSubject.set(`${c}-${side}`, chosenGroup.subjectCode);
-                roomActiveSubjects.add(chosenGroup.subjectCode);
-
-                for (let r = 1; r <= rowsNeeded; r++) {
-                    if (chosenGroup.students.length === 0) {
-                        // Subject exhausted mid-column. Find replacement (bench-safe).
-                        const exhaustedSubject: string = chosenGroup.subjectCode;
-                        sortGroups(groups);
-
-                        // Try room-active first
-                        let replacement: SubjectGroup | null = null;
-                        for (const subCode of roomActiveSubjects) {
-                            if (subCode === otherSideSubject || subCode === exhaustedSubject) continue;
-                            const g: SubjectGroup | undefined = groups.find(g => g.subjectCode === subCode && g.students.length > 0);
-                            if (g) { replacement = g; break; }
-                        }
-                        // Then any bench-safe subject
-                        if (!replacement) {
-                            replacement = groups.find(g =>
-                                g.students.length > 0 && g.subjectCode !== otherSideSubject
-                            ) ?? null;
-                        }
-
-                        if (!replacement) break; // No bench-safe subject available, leave remaining empty
-                        chosenGroup = replacement;
-                        roomActiveSubjects.add(chosenGroup.subjectCode);
-                    }
-
-                    const student = chosenGroup.students.shift()!;
-                    chosenGroup.totalStudents--;
-                    roomPlan.seats.push({ row: r, column: c, side, student });
-
-                    if (chosenGroup.totalStudents === 0) {
-                        groups.splice(groups.indexOf(chosenGroup), 1);
-                    }
+                if (rightGroup && remaining(rightGroup) > 0) {
+                    const student = take(rightGroup)!;
+                    roomPlan.seats.push({ row: r, column: c, side: 'RIGHT', student });
+                    laneSubject.set(`${c}-RIGHT`, rightGroup.subjectCode);
+                    roomActive.add(rightGroup.subjectCode);
                 }
             }
         }
-
-        // Clean up exhausted groups
-        sortGroups(groups);
     }
 
-    const plans = Array.from(plansMap.values());
-
-    // Unallocated students
+    // Phase 8: Assemble output in original room order and collect unallocated
+    const plans = rooms.map(r => plansMap.get(r.id)!);
     const unallocated: Student[] = [];
-    groups.forEach(g => unallocated.push(...g.students));
+    for (const g of groups) {
+        for (let i = g.cursor; i < g.students.length; i++) {
+            unallocated.push(g.students[i]);
+        }
+    }
     if (unallocated.length > 0 && plans.length > 0) {
         plans[plans.length - 1].unallocatedStudents = unallocated;
     }
 
     return plans;
+};
+
+/**
+ * Monte Carlo Optimization Wrapper
+ * Runs the randomized allocator multiple times and returns the plan
+ * that leaves the fewest unallocated students (minimizing blank spaces).
+ */
+export const generateSeatingPlan = (input: AllocationInput): SeatingPlan[] => {
+    let bestPlans: SeatingPlan[] | null = null;
+    let minUnallocated = Infinity;
+
+    const ITERATIONS = 100; // 100 passes is near-instant in JS for typical inputs
+
+    for (let i = 0; i < ITERATIONS; i++) {
+        const currentPlans = generateSinglePlan(input);
+        
+        // Count total unallocated
+        const lastRoom = currentPlans[currentPlans.length - 1];
+        const unallocatedCount = lastRoom && lastRoom.unallocatedStudents ? lastRoom.unallocatedStudents.length : input.students.length;
+        
+        if (unallocatedCount < minUnallocated) {
+            minUnallocated = unallocatedCount;
+            bestPlans = currentPlans;
+            
+            // If we found a perfect packing, we can stop early
+            if (minUnallocated === 0) break;
+        }
+    }
+
+    return bestPlans || generateSinglePlan(input);
 };
