@@ -4,6 +4,7 @@ import Dashboard from './components/pages/Dashboard';
 import Rooms from './components/pages/Rooms';
 import Upload from './components/pages/Upload';
 import Preview from './components/pages/Preview';
+import Help from './components/pages/Help';
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
           <Route path="rooms" element={<Rooms />} />
           <Route path="upload" element={<Upload />} />
           <Route path="preview" element={<Preview />} />
+          <Route path="help" element={<Help />} />
         </Route>
       </Routes>
     </BrowserRouter>
